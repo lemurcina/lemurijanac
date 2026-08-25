@@ -75,8 +75,8 @@ class ScoreBreakdown:
 class OpportunityScore:
     strategy: str
     score: float
-    expected_gross_profit: float | None
-    expected_gross_profit_per_agent_hour: float | None
+    potential_gross_profit: float | None
+    potential_gross_profit_per_agent_hour: float | None
     breakdown: ScoreBreakdown
 
 
@@ -133,7 +133,7 @@ def _normalized_inputs(inputs: OpportunityScoringInput) -> dict[str, float | Non
     }
 
 
-def _compute_expected_gross_profit(inputs: OpportunityScoringInput) -> tuple[float | None, float | None]:
+def _compute_potential_gross_profit(inputs: OpportunityScoringInput) -> tuple[float | None, float | None]:
     if inputs.expected_deal_value is None or inputs.expected_margin is None:
         return None, None
 
@@ -191,7 +191,7 @@ def score_opportunity(
 
     total_penalty = missing_penalty_total + evidence_penalty
 
-    expected_gross_profit, expected_gross_profit_per_agent_hour = _compute_expected_gross_profit(inputs)
+    potential_gross_profit, potential_gross_profit_per_agent_hour = _compute_potential_gross_profit(inputs)
 
     breakdown = ScoreBreakdown(
         normalized_inputs=_freeze_mapping(normalized_inputs),
@@ -207,8 +207,8 @@ def score_opportunity(
     return OpportunityScore(
         strategy=strategy,
         score=final_score,
-        expected_gross_profit=expected_gross_profit,
-        expected_gross_profit_per_agent_hour=expected_gross_profit_per_agent_hour,
+        potential_gross_profit=potential_gross_profit,
+        potential_gross_profit_per_agent_hour=potential_gross_profit_per_agent_hour,
         breakdown=breakdown,
     )
 

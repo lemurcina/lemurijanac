@@ -14,8 +14,8 @@ All factor inputs are expected in `[0, 1]` and are clamped to `[0, 1]`:
 
 Additional fields:
 - `evidence_provenance_present` (required guardrail)
-- `expected_deal_value` (for expected gross profit)
-- `estimated_agent_hours` (for expected gross profit per agent-hour)
+- `expected_deal_value` (for potential gross profit)
+- `estimated_agent_hours` (for potential gross profit per agent-hour)
 
 ## Defaults (no hidden constants)
 Default strategy weights:
@@ -78,7 +78,7 @@ Example (`strategies.json`):
 Example A (strong evidence, moderate competition):
 - urgency `0.8`, confidence `0.9`, buyer_intent `0.7`, expected_margin `0.5`, competition `0.3`, fulfillment_ease `0.6`, evidence_freshness `0.8`, provenance `true`
 - expected_deal_value `12000`, estimated_agent_hours `6`
-- result: score `72.0`, expected gross profit `6000`, expected gross profit per agent-hour `1000`
+- result: score `72.0`, potential gross profit `6000`, potential gross profit per agent-hour `1000`
 
 Example B (missing provenance):
 - same factors, provenance `false`

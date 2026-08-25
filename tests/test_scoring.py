@@ -76,11 +76,20 @@ def test_score_is_zero_without_evidence_provenance() -> None:
     assert no_provenance.breakdown.evidence_penalty > 0
 
 
-def test_expected_profit_metrics_are_separate() -> None:
+def test_potential_profit_metrics_are_separate() -> None:
     result = score_opportunity(make_input(expected_margin=0.5, expected_deal_value=8_000.0, estimated_agent_hours=4.0))
 
-    assert result.expected_gross_profit == 4_000.0
-    assert result.expected_gross_profit_per_agent_hour == 1_000.0
+    assert result.potential_gross_profit == 4_000.0
+    assert result.potential_gross_profit_per_agent_hour == 1_000.0
+
+
+def test_potential_profit_fields_are_not_mislabeled_as_expected_or_realized() -> None:
+    result = score_opportunity(make_input(expected_margin=0.5, expected_deal_value=8_000.0, estimated_agent_hours=4.0))
+
+    assert not hasattr(result, "expected_gross_profit")
+    assert not hasattr(result, "expected_gross_profit_per_agent_hour")
+    assert not hasattr(result, "realized_gross_profit")
+    assert not hasattr(result, "realized_gross_profit_per_agent_hour")
 
 
 def test_strategy_config_is_loadable_without_code_changes(tmp_path) -> None:
@@ -176,5 +185,5 @@ def test_synthetic_docs_example_a_matches_engine_output() -> None:
     )
 
     assert result.score == 72.0
-    assert result.expected_gross_profit == 6_000.0
-    assert result.expected_gross_profit_per_agent_hour == 1_000.0
+    assert result.potential_gross_profit == 6_000.0
+    assert result.potential_gross_profit_per_agent_hour == 1_000.0
