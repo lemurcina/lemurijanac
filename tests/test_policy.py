@@ -362,11 +362,11 @@ class TestAdversarialBypass:
     """Ensure common bypass techniques are rejected."""
 
     def test_negative_amount_does_not_bypass_debt_rule(self):
-        """A negative amount shouldn't trick the debt check – debt flag is explicit."""
+        """A negative amount is rejected outright (fail-closed on invalid input) before debt check."""
         e = _engine(allow_debt=False)
         d = e.check_capital("credit", amount=-50.0, daily_spent=0.0, creates_debt=True)
         assert d.outcome == Outcome.DENY
-        assert d.reason == ReasonCode.DEBT_FORBIDDEN
+        assert d.reason == ReasonCode.POLICY_DATA_MISSING
 
     def test_zero_amount_speculative_still_blocked(self):
         e = _engine(allow_speculative=False)
@@ -444,6 +444,34 @@ class TestAdversarialBypass:
         e = _engine(enabled_channels=["email"], max_attempts=3)
         d = e.check_channel("email", "u1", attempt_count=2, local_hour=10)
         assert d.outcome == Outcome.ALLOW
+
+    @pytest.mark.parametrize("field,kwargs", [
+        ("amount",        {"amount": -1.0, "daily_spent": 0.0, "strategy_spent": 0.0}),
+        ("amount",        {"amount": -0.01, "daily_spent": 0.0, "strategy_spent": 0.0}),
+        ("daily_spent",   {"amount": 1.0, "daily_spent": -50.0, "strategy_spent": 0.0}),
+        ("strategy_spent", {"amount": 1.0, "daily_spent": 0.0, "strategy_spent": -100.0}),
+    ])
+    def test_negative_monetary_input_is_denied(self, field, kwargs):
+        """Negative monetary inputs must be rejected to prevent limit-bypass via underflow."""
+        e = _engine(per_action_limit=1000.0, daily_limit=1000.0, strategy_limit=1000.0)
+        d = e.check_capital("action", **kwargs)
+        assert d.outcome == Outcome.DENY, f"Expected DENY for negative '{field}'"
+        assert d.reason == ReasonCode.POLICY_DATA_MISSING
+
+    def test_negative_amount_denied_even_when_debt_allowed(self):
+        """Negative amount is rejected before debt/speculative checks regardless of flag."""
+        e = _engine(allow_debt=True)
+        d = e.check_capital("action", amount=-10.0, daily_spent=0.0, creates_debt=True)
+        assert d.outcome == Outcome.DENY
+        assert d.reason == ReasonCode.POLICY_DATA_MISSING
+
+    def test_brokerage_deny_message_uses_i_accept_risk_token(self):
+        """Error detail must direct operators to set the env var to I_ACCEPT_RISK, not 'true'."""
+        e = _engine(allow_brokerage=False)
+        d = e.check_business("invest_refer", is_regulated_brokerage=True)
+        assert d.outcome == Outcome.DENY
+        assert "I_ACCEPT_RISK" in (d.details or "")
+        assert "=true" not in (d.details or "")
 
 # ---------------------------------------------------------------------------
 # Stale env-var safety: safety-critical relaxation flags require I_ACCEPT_RISK

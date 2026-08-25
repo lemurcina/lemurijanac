@@ -89,6 +89,25 @@ class PolicyEngine:
                 ctx,
             )
 
+        # Fail closed on invalid monetary state: negative values could silently
+        # reduce totals and bypass limit checks.
+        for field_name, field_value in (
+            ("amount", amount),
+            ("daily_spent", daily_spent),
+            ("strategy_spent", strategy_spent),
+        ):
+            if field_value < 0:
+                return self._record(
+                    action,
+                    Decision(
+                        outcome=Outcome.DENY,
+                        reason=ReasonCode.POLICY_DATA_MISSING,
+                        details=f"Invalid monetary input: '{field_name}' must not be negative (got {field_value}).",
+                        metadata={"field": field_name, "value": field_value},
+                    ),
+                    ctx,
+                )
+
         # Hard-stop checks: evaluate before the irreversible escalation so that
         # outright-forbidden operations cannot escape a DENY by being also
         # marked irreversible.
@@ -349,7 +368,7 @@ class PolicyEngine:
                     reason=ReasonCode.REGULATED_BROKERAGE_BLOCKED,
                     details=(
                         "Regulated brokerage/referral is blocked by policy. "
-                        "Set POLICY_ALLOW_REGULATED_BROKERAGE=true to permit explicitly."
+                        "Set POLICY_ALLOW_REGULATED_BROKERAGE=I_ACCEPT_RISK to permit explicitly."
                     ),
                 ),
                 ctx,
