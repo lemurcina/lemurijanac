@@ -35,3 +35,19 @@ Every material claim must preserve source URL/id, observed timestamp, extraction
 
 ## Initial deployment
 Python service + Postgres. Scheduled collectors run independently. FastAPI exposes a read/write control plane. A minimal dashboard reads the API. Everything must run locally with synthetic fixtures before any live integration.
+
+## Chief revenue allocator behavior
+- Allocates by expected gross profit per agent-hour, never by raw lead/email volume.
+- Tracks strategy posterior expected value, sample count, uncertainty, and cooldown state.
+- Reserves bounded exploration budget for sparse/high-uncertainty strategies while shifting the rest of capacity toward proven strategies.
+- Enforces a capital-at-risk cap during allocation.
+- Records outcomes (`WON`, `LOST`, `NO_RESPONSE`, `INVALID`) with realized gross profit and updates kill/pause or reactivation state.
+- Emits plain-language explanations for every reallocation decision.
+
+### Example daily strategy table
+
+| strategy_id | samples | posterior_expected_value | expected_gross_profit_per_agent_hour | uncertainty | cooldown_rounds_remaining |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| permits-ti | 34 | 182.40 | 96.00 | 0.0730 | 0 |
+| business-openings | 12 | 41.75 | 28.50 | 0.1134 | 0 |
+| surplus-assets | 7 | -14.10 | -8.80 | 0.1562 | 1 |
