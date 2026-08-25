@@ -4,6 +4,7 @@ from shadow_market_desk_revenue_allocator import (
     RevenueAllocator,
     SyntheticStrategy,
     run_seeded_simulation,
+    summarize_daily_strategy_table,
 )
 
 
@@ -74,6 +75,32 @@ def test_negative_outcomes_trigger_cooldown_and_recovery() -> None:
     assert not allocator.strategies["fragile"].in_cooldown
 
 
+def test_kill_does_not_immediately_reactivate_in_same_outcome() -> None:
+    allocator = RevenueAllocator(min_samples_for_kill=3, kill_gph_threshold=0.0, cooldown_rounds=2)
+    allocator.ensure_strategy("edge")
+
+    _record(allocator, "edge", OutcomeKind.LOST, profit=-1.0)
+    _record(allocator, "edge", OutcomeKind.LOST, profit=-1.0)
+    _record(allocator, "edge", OutcomeKind.LOST, profit=-1.0)
+
+    assert allocator.strategies["edge"].in_cooldown
+
+
+def test_cooldown_advances_only_on_round_tick() -> None:
+    allocator = RevenueAllocator(min_samples_for_kill=3, kill_gph_threshold=0.0, cooldown_rounds=2)
+    allocator.ensure_strategy("paused")
+
+    _record(allocator, "paused", OutcomeKind.LOST, profit=-2.0)
+    _record(allocator, "paused", OutcomeKind.LOST, profit=-2.0)
+    _record(allocator, "paused", OutcomeKind.LOST, profit=-2.0)
+
+    assert allocator.strategies["paused"].cooldown_rounds_remaining == 2
+    allocator.allocate(total_agent_hours=4.0, capital_at_risk_limit=100.0)
+    assert allocator.strategies["paused"].cooldown_rounds_remaining == 2
+    allocator.advance_round()
+    assert allocator.strategies["paused"].cooldown_rounds_remaining == 1
+
+
 def test_capital_at_risk_constraint_caps_allocation() -> None:
     allocator = RevenueAllocator(exploration_fraction=0.0)
     allocator.ensure_strategy("risky")
@@ -134,4 +161,22 @@ def test_seeded_simulation_is_deterministic() -> None:
     ] == [
         [d.allocated_agent_hours for d in day.decisions]
         for day in run_two.daily_allocations
+    ]
+
+
+def test_daily_strategy_table_summary_fields_and_rounding() -> None:
+    allocator = RevenueAllocator()
+    _record(allocator, "alpha", OutcomeKind.WON, profit=123.456, hours=2.0, capital=25.0)
+
+    rows = summarize_daily_strategy_table(allocator)
+
+    assert rows == [
+        {
+            "strategy_id": "alpha",
+            "samples": 1,
+            "posterior_expected_value": 123.46,
+            "expected_gross_profit_per_agent_hour": 61.73,
+            "uncertainty": 0.2357,
+            "cooldown_rounds_remaining": 0,
+        }
     ]

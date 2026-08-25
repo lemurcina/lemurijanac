@@ -111,14 +111,17 @@ class RevenueAllocator:
         strategy = self.ensure_strategy(outcome.strategy_id)
         strategy.record_outcome(outcome)
 
-        if (
+        kill_triggered = (
             strategy.sample_count >= self.min_samples_for_kill
             and strategy.expected_gross_profit_per_agent_hour <= self.kill_gph_threshold
             and strategy.consecutive_negative_outcomes >= 3
-        ):
+        )
+        if kill_triggered:
             strategy.cooldown_rounds_remaining = self.cooldown_rounds
-
-        if strategy.in_cooldown and strategy.expected_gross_profit_per_agent_hour >= self.reactivation_gph_threshold:
+        elif (
+            strategy.in_cooldown
+            and strategy.expected_gross_profit_per_agent_hour >= self.reactivation_gph_threshold
+        ):
             strategy.cooldown_rounds_remaining = 0
 
     def allocate(
@@ -144,7 +147,6 @@ class RevenueAllocator:
                     AllocationDecision(strategy.strategy_id, 0.0, "cooldown: paused for low value")
                 )
             explanations.append("All strategies are paused; no allocation made.")
-            self._tick_cooldown()
             return AllocationResult(decisions, exploration_budget, explanations)
 
         explore_candidates = sorted(active, key=lambda s: (s.sample_count, -s.uncertainty, s.strategy_id))
@@ -156,10 +158,16 @@ class RevenueAllocator:
 
         exploration_allocations: dict[str, float] = {}
         if exploration_budget > 0 and explore_candidates:
-            per_strategy = exploration_budget / len(explore_candidates)
-            for strategy in explore_candidates:
-                if strategy.expected_gross_profit_per_agent_hour < self.kill_gph_threshold:
-                    continue
+            eligible_exploration = [
+                strategy
+                for strategy in explore_candidates
+                if strategy.expected_gross_profit_per_agent_hour >= self.kill_gph_threshold
+            ]
+            if eligible_exploration:
+                per_strategy = exploration_budget / len(eligible_exploration)
+            else:
+                per_strategy = 0.0
+            for strategy in eligible_exploration:
                 capped = self._cap_by_risk(per_strategy, strategy, capital_remaining)
                 if capped <= 0:
                     continue
@@ -216,7 +224,19 @@ class RevenueAllocator:
                 f"allocated={allocated:.2f}, reason={reason}."
             )
 
-        self._tick_cooldown()
+        total_allocated = sum(decision.allocated_agent_hours for decision in decisions)
+        unallocated = max(total_agent_hours - total_allocated, 0.0)
+        if unallocated > 0:
+            explanations.append(
+                f"Unallocated capacity={unallocated:.2f} agent-hours due to capital-at-risk or "
+                "non-positive expected gross profit per agent-hour constraints."
+            )
+
+        actual_exploration = sum(exploration_allocations.values())
+        explanations.append(
+            f"Exploration budget={exploration_budget:.2f} agent-hours; "
+            f"actual exploration allocation={actual_exploration:.2f} agent-hours."
+        )
         return AllocationResult(decisions, exploration_budget, explanations)
 
     def _cap_by_risk(self, hours: float, strategy: StrategyModel, capital_remaining: float) -> float:
@@ -231,6 +251,9 @@ class RevenueAllocator:
             if strategy.cooldown_rounds_remaining > 0:
                 strategy.cooldown_rounds_remaining -= 1
 
+    def advance_round(self) -> None:
+        self._tick_cooldown()
+
 
 @dataclass(slots=True)
 class SyntheticStrategy:
@@ -242,16 +265,24 @@ class SyntheticStrategy:
     invalid_profit_range: tuple[float, float]
     agent_hours_range: tuple[float, float]
     capital_at_risk_range: tuple[float, float]
+    lost_split_of_non_wins: float = 0.4
+    no_response_split_of_non_wins: float = 0.4
+
+    @property
+    def mean_agent_hours(self) -> float:
+        return (self.agent_hours_range[0] + self.agent_hours_range[1]) / 2
 
     def sample_outcome(self, rng: Random) -> Outcome:
+        lost_split = min(max(self.lost_split_of_non_wins, 0.0), 1.0)
+        no_response_split = min(max(self.no_response_split_of_non_wins, 0.0), 1.0 - lost_split)
         draw = rng.random()
         if draw < self.win_rate:
             kind = OutcomeKind.WON
             gross = _uniform(rng, *self.won_profit_range)
-        elif draw < self.win_rate + 0.4 * (1 - self.win_rate):
+        elif draw < self.win_rate + lost_split * (1 - self.win_rate):
             kind = OutcomeKind.LOST
             gross = _uniform(rng, *self.lost_profit_range)
-        elif draw < self.win_rate + 0.8 * (1 - self.win_rate):
+        elif draw < self.win_rate + (lost_split + no_response_split) * (1 - self.win_rate):
             kind = OutcomeKind.NO_RESPONSE
             gross = _uniform(rng, *self.no_response_profit_range)
         else:
@@ -302,8 +333,7 @@ def run_seeded_simulation(
         for decision in allocation.decisions:
             if decision.allocated_agent_hours <= 0:
                 continue
-            model = allocator.strategies[decision.strategy_id]
-            avg_hours = model.total_agent_hours / model.sample_count if model.sample_count else 1.0
+            avg_hours = strategies[decision.strategy_id].mean_agent_hours
             attempts = max(1, round(decision.allocated_agent_hours / max(avg_hours, 1e-9)))
 
             for _ in range(attempts):
@@ -311,6 +341,7 @@ def run_seeded_simulation(
                 allocator.record_outcome(outcome)
                 total_profit += outcome.realized_gross_profit
                 total_hours += outcome.agent_hours
+        allocator.advance_round()
 
     return SimulationResult(
         daily_allocations=daily_allocations,
