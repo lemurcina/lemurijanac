@@ -1,0 +1,48 @@
+name: Shadow Market Desk CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: python -m pip install --upgrade pip && python -m pip install -e '.[dev]'
+
+      - name: Reject generated Python artifacts
+        shell: bash
+        run: |
+          if find . -type f \( -name '*.pyc' -o -name '*.pyo' \) -print -quit | grep -q .; then
+            echo 'Committed Python bytecode found.'
+            find . -type f \( -name '*.pyc' -o -name '*.pyo' \) -print
+            exit 1
+          fi
+          if find . -type d \( -name '__pycache__' -o -name '.pytest_cache' -o -name '.ruff_cache' \) -print -quit | grep -q .; then
+            echo 'Committed/generated cache directory found in checkout.'
+            find . -type d \( -name '__pycache__' -o -name '.pytest_cache' -o -name '.ruff_cache' \) -print
+            exit 1
+          fi
+
+      - name: Ruff
+        run: python -m ruff check .
+
+      - name: Tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m pytest -q
