@@ -4,10 +4,11 @@ import logging
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlencode
 
 from pydantic import ValidationError
 
-from ..adapter import SignalAdapter, canonical_json, deterministic_key
+from ..adapter import SignalAdapter, deterministic_key
 from ..models import EntityRef, Signal, SourceEvidence, SourceTerms
 
 logger = logging.getLogger(__name__)
@@ -52,13 +53,14 @@ class LACommercialPermitAdapter(SignalAdapter):
         if address:
             entity_refs.append(EntityRef(kind="address", value=address, display_name=address))
 
-        raw_metadata = canonical_json(dict(raw_record))
+        raw_metadata = dict(raw_record)
 
         try:
+            query = urlencode({"pcis_permit": permit_number})
             evidence = SourceEvidence(
                 source_name=self.source_name,
                 source_record_id=permit_number,
-                source_url=f"{self.endpoint}?pcis_permit={permit_number}",
+                source_url=f"{self.endpoint}?{query}",
                 observed_at=observed_at,
                 extraction_method="api",
                 terms=self.source_terms,
@@ -77,6 +79,10 @@ class LACommercialPermitAdapter(SignalAdapter):
                 },
             )
         except ValidationError:
+            logger.warning(
+                "ingest_record_validation_error",
+                extra={"source_name": self.source_name, "permit_number": permit_number},
+            )
             return None
 
 

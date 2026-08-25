@@ -1,4 +1,10 @@
-from .adapter import JsonHttpSourceClient, SignalAdapter, SourceClient, SourceFetchError
+from .adapter import (
+    JsonHttpSourceClient,
+    SignalAdapter,
+    SourceClient,
+    SourceFetchError,
+    deterministic_key,
+)
 from .models import EntityRef, Signal, SourceEvidence, SourceTerms
 
 __all__ = [
@@ -10,4 +16,5 @@ __all__ = [
     "SourceEvidence",
     "SourceFetchError",
     "SourceTerms",
+    "deterministic_key",
 ]

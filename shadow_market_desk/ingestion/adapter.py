@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
 from typing import Any, Protocol
 
 import httpx
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from .models import Signal, SourceTerms
 
@@ -36,40 +34,40 @@ class JsonHttpSourceClient:
         self._timeout_seconds = timeout_seconds
         self._max_attempts = max_attempts
         self._rate_limit_hook = rate_limit_hook
+        self._http_client = httpx.Client(timeout=self._timeout_seconds)
 
     def get_json(self, url: str, *, params: Mapping[str, Any] | None = None) -> Any:
         if self._rate_limit_hook:
             self._rate_limit_hook(url)
 
-        @retry(
+        try:
+            return self._request_with_retry(url, params=params)
+        except httpx.HTTPError as exc:  # pragma: no cover - defensive boundary
+            raise SourceFetchError(f"failed to fetch source: {url}") from exc
+
+    def close(self) -> None:
+        self._http_client.close()
+
+    def _request_with_retry(self, url: str, *, params: Mapping[str, Any] | None = None) -> Any:
+        retrying = Retrying(
             reraise=True,
             stop=stop_after_attempt(self._max_attempts),
             wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
             retry=retry_if_exception_type(httpx.HTTPError),
         )
-        def _request() -> Any:
-            with httpx.Client(timeout=self._timeout_seconds) as client:
-                response = client.get(url, params=params)
+        for attempt in retrying:
+            with attempt:
+                response = self._http_client.get(url, params=params)
                 response.raise_for_status()
                 return response.json()
-
-        try:
-            return _request()
-        except httpx.HTTPError as exc:  # pragma: no cover - defensive boundary
-            raise SourceFetchError(f"failed to fetch source: {url}") from exc
+        return None
 
 
 class SignalAdapter(ABC):
     source_terms: SourceTerms
 
-    def __init__(
-        self,
-        *,
-        client: SourceClient,
-        now_provider: Callable[[], datetime] | None = None,
-    ) -> None:
+    def __init__(self, *, client: SourceClient) -> None:
         self._client = client
-        self._now_provider = now_provider or (lambda: datetime.now(UTC))
 
     @property
     @abstractmethod
@@ -113,15 +111,8 @@ class SignalAdapter(ABC):
         )
         return list(deduped.values())
 
-    def observed_at(self) -> datetime:
-        return self._now_provider()
-
 
 def deterministic_key(parts: list[str]) -> str:
     canonical = "|".join(part.strip().lower() for part in parts)
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return digest
-
-
-def canonical_json(value: Mapping[str, Any]) -> dict[str, Any]:
-    return json.loads(json.dumps(value, sort_keys=True, default=str))
