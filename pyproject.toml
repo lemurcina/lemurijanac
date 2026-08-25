@@ -26,3 +26,4 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
+lint.extend-ignore = ["B008"]
