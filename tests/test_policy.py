@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+from typing import ClassVar
+
 import pytest
 
 from policy.config import (
@@ -13,7 +16,6 @@ from policy.config import (
 )
 from policy.engine import PolicyEngine
 from policy.models import Outcome, ReasonCode
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -442,3 +444,97 @@ class TestAdversarialBypass:
         e = _engine(enabled_channels=["email"], max_attempts=3)
         d = e.check_channel("email", "u1", attempt_count=2, local_hour=10)
         assert d.outcome == Outcome.ALLOW
+
+# ---------------------------------------------------------------------------
+# Stale env-var safety: safety-critical relaxation flags require I_ACCEPT_RISK
+# ---------------------------------------------------------------------------
+
+
+class TestStaleEnvVarSafety:
+    """Verify that generic truthy env-var values cannot silently weaken safety defaults.
+
+    Safety-critical flags are only relaxed when the env var equals the explicit
+    acknowledgement token ``I_ACCEPT_RISK``.  Common truthy values that might
+    appear in developer shells or be copy-pasted from documentation (``true``,
+    ``1``, ``yes``) must be silently ignored and the safe default preserved.
+    """
+
+    # Each tuple is (env_var_name, config_attr_path)
+    SAFETY_RELAX_FLAGS: ClassVar[list[tuple[str, str]]] = [
+        ("POLICY_ALLOW_DEBT", "capital.allow_debt"),
+        ("POLICY_ALLOW_SPECULATIVE_PURCHASES", "capital.allow_speculative_purchases"),
+        ("POLICY_ALLOW_BINDING_CONTRACTS", "business.allow_binding_contracts"),
+        (
+            "POLICY_ALLOW_LICENSED_PROFESSIONAL_IMPERSONATION",
+            "business.allow_licensed_professional_impersonation",
+        ),
+        ("POLICY_ALLOW_REGULATED_BROKERAGE", "business.allow_regulated_brokerage"),
+    ]
+
+    def _get_flag(self, cfg: PolicyConfig, dotted: str) -> bool:
+        obj: object = cfg
+        for part in dotted.split("."):
+            obj = getattr(obj, part)
+        return bool(obj)
+
+    @pytest.mark.parametrize("env_var,dotted", SAFETY_RELAX_FLAGS)
+    @pytest.mark.parametrize("stale_value", ["true", "1", "yes", "True", "TRUE", "YES"])
+    def test_stale_truthy_value_does_not_relax_flag(
+        self, env_var: str, dotted: str, stale_value: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A generic truthy env-var value must not relax a safety flag."""
+        monkeypatch.setenv(env_var, stale_value)
+        cfg = PolicyConfig()
+        assert self._get_flag(cfg, dotted) is False, (
+            f"{env_var}={stale_value!r} should NOT relax {dotted}"
+        )
+
+    @pytest.mark.parametrize("env_var,dotted", SAFETY_RELAX_FLAGS)
+    def test_ack_token_does_relax_flag(
+        self, env_var: str, dotted: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The explicit I_ACCEPT_RISK token must relax the flag."""
+        monkeypatch.setenv(env_var, "I_ACCEPT_RISK")
+        cfg = PolicyConfig()
+        assert self._get_flag(cfg, dotted) is True, (
+            f"{env_var}=I_ACCEPT_RISK should relax {dotted}"
+        )
+
+    @pytest.mark.parametrize("stale_value", ["false", "0", "no", "False", "FALSE"])
+    def test_stale_falsy_evidence_gate_stays_enabled(
+        self, stale_value: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Setting the evidence-gate disable var to a falsy value must not disable the gate."""
+        monkeypatch.setenv("POLICY_DISABLE_EVIDENCE_GATE", stale_value)
+        cfg = PolicyConfig()
+        assert cfg.evidence.require_evidence_for_outbound_claims is True
+
+    def test_ack_token_disables_evidence_gate(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """I_ACCEPT_RISK must disable the evidence gate when set."""
+        monkeypatch.setenv("POLICY_DISABLE_EVIDENCE_GATE", "I_ACCEPT_RISK")
+        cfg = PolicyConfig()
+        assert cfg.evidence.require_evidence_for_outbound_claims is False
+
+    def test_unset_safety_flags_default_to_false(self) -> None:
+        """Without any env vars, every safety-critical flag defaults to the safe value."""
+        safety_vars = [v for v, _ in self.SAFETY_RELAX_FLAGS] + ["POLICY_DISABLE_EVIDENCE_GATE"]
+        for v in safety_vars:
+            assert v not in os.environ, f"Unexpected env var {v} in test environment"
+        cfg = PolicyConfig()
+        for _, dotted in self.SAFETY_RELAX_FLAGS:
+            assert self._get_flag(cfg, dotted) is False
+        assert cfg.evidence.require_evidence_for_outbound_claims is True
+
+    def test_old_evidence_gate_env_var_emits_warning(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Setting the old POLICY_REQUIRE_EVIDENCE_FOR_OUTBOUND_CLAIMS env var emits a warning."""
+        import logging
+
+        monkeypatch.setenv("POLICY_REQUIRE_EVIDENCE_FOR_OUTBOUND_CLAIMS", "false")
+        with caplog.at_level(logging.WARNING, logger="policy.config"):
+            PolicyConfig()
+        assert any(
+            "POLICY_REQUIRE_EVIDENCE_FOR_OUTBOUND_CLAIMS" in record.message
+            for record in caplog.records
+        ), "Expected a deprecation warning for the old env var name"

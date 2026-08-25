@@ -4,7 +4,33 @@ Operators can relax (or tighten) any rule by setting the corresponding
 environment variable *or* by supplying a YAML file path in the
 ``POLICY_CONFIG_PATH`` environment variable.  No code edits are required.
 
-Example YAML (save as e.g. ``policy.yaml`` and set
+## Safety-critical relaxation flags
+
+Flags that weaken the default-deny safety posture (allow_debt,
+allow_speculative_purchases, allow_binding_contracts,
+allow_licensed_professional_impersonation, allow_regulated_brokerage,
+require_evidence_for_outbound_claims=false) require **explicit operator
+intent** when set via environment variable.  Setting them to a generic
+truthy value (``1``, ``true``, ``yes``) is intentionally *ignored* and
+the safe default is preserved.
+
+To relax a safety flag via env var, the value must be the exact
+acknowledgement token ``I_ACCEPT_RISK``::
+
+    # Wrong – ignored, safe default kept:
+    export POLICY_ALLOW_SPECULATIVE_PURCHASES=true
+
+    # Correct – operator explicitly accepts the risk:
+    export POLICY_ALLOW_SPECULATIVE_PURCHASES=I_ACCEPT_RISK
+
+This design prevents stale variables inherited from developer shells or
+copied from examples from silently weakening the production safety posture.
+
+YAML-based configuration (``POLICY_CONFIG_PATH``) does not require the
+acknowledgement token because the YAML file is an intentional artefact
+that operators must create and deploy explicitly.
+
+## Example YAML (save as e.g. ``policy.yaml`` and set
 ``POLICY_CONFIG_PATH=/path/to/policy.yaml``):
 
     capital:
@@ -28,6 +54,10 @@ Example YAML (save as e.g. ``policy.yaml`` and set
 
     evidence:
       require_evidence_for_outbound_claims: true
+
+To disable the evidence gate via env var (requires acknowledgement)::
+
+    export POLICY_DISABLE_EVIDENCE_GATE=I_ACCEPT_RISK
 """
 
 from __future__ import annotations
@@ -64,6 +94,38 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes")
 
 
+# Acknowledgement token required to relax a safety-critical flag via env var.
+_RISK_ACK = "I_ACCEPT_RISK"
+
+
+def _env_safety_relax(name: str) -> bool:
+    """Return True only when the env var is set to the explicit risk-acknowledgement token.
+
+    Generic truthy values (``true``, ``1``, ``yes``) are intentionally ignored
+    so that stale variables inherited from developer shells or copied from
+    documentation cannot silently weaken the production safety posture.
+
+    Usage::
+
+        export POLICY_ALLOW_SPECULATIVE_PURCHASES=I_ACCEPT_RISK
+    """
+    raw = os.environ.get(name)
+    return raw is not None and raw.strip() == _RISK_ACK
+
+
+def _env_safety_tighten(name: str, default: bool) -> bool:
+    """Inverse of _env_safety_relax for flags where the default is True (tightened).
+
+    The flag stays at its ``default`` unless the operator explicitly relaxes it
+    by setting the env var to ``I_ACCEPT_RISK``.  Any other value (including
+    ``false``, ``0``) is treated as the safe default to prevent accidental
+    weakening via copy-paste or stale variables.
+    """
+    if _env_safety_relax(name):
+        return not default
+    return default
+
+
 def _env_list(name: str, default: list[str]) -> list[str]:
     raw = os.environ.get(name)
     if raw is None:
@@ -83,10 +145,12 @@ class CapitalConfig:
         default_factory=lambda: _env_float("POLICY_STRATEGY_LIMIT", 1000.0)
     )
     allow_debt: bool = field(
-        default_factory=lambda: _env_bool("POLICY_ALLOW_DEBT", False)
+        # Safety-critical: requires I_ACCEPT_RISK, not a generic truthy value.
+        default_factory=lambda: _env_safety_relax("POLICY_ALLOW_DEBT")
     )
     allow_speculative_purchases: bool = field(
-        default_factory=lambda: _env_bool("POLICY_ALLOW_SPECULATIVE_PURCHASES", False)
+        # Safety-critical: requires I_ACCEPT_RISK, not a generic truthy value.
+        default_factory=lambda: _env_safety_relax("POLICY_ALLOW_SPECULATIVE_PURCHASES")
     )
 
 
@@ -112,25 +176,43 @@ class ChannelConfig:
 @dataclass
 class BusinessConfig:
     allow_binding_contracts: bool = field(
-        default_factory=lambda: _env_bool("POLICY_ALLOW_BINDING_CONTRACTS", False)
+        # Safety-critical: requires I_ACCEPT_RISK, not a generic truthy value.
+        default_factory=lambda: _env_safety_relax("POLICY_ALLOW_BINDING_CONTRACTS")
     )
     allow_licensed_professional_impersonation: bool = field(
-        default_factory=lambda: _env_bool(
-            "POLICY_ALLOW_LICENSED_PROFESSIONAL_IMPERSONATION", False
+        # Safety-critical: requires I_ACCEPT_RISK, not a generic truthy value.
+        default_factory=lambda: _env_safety_relax(
+            "POLICY_ALLOW_LICENSED_PROFESSIONAL_IMPERSONATION"
         )
     )
     allow_regulated_brokerage: bool = field(
-        default_factory=lambda: _env_bool("POLICY_ALLOW_REGULATED_BROKERAGE", False)
+        # Safety-critical: requires I_ACCEPT_RISK, not a generic truthy value.
+        default_factory=lambda: _env_safety_relax("POLICY_ALLOW_REGULATED_BROKERAGE")
     )
 
 
 @dataclass
 class EvidenceConfig:
     require_evidence_for_outbound_claims: bool = field(
-        default_factory=lambda: _env_bool(
-            "POLICY_REQUIRE_EVIDENCE_FOR_OUTBOUND_CLAIMS", True
+        # Safety-critical: disabling evidence gate requires I_ACCEPT_RISK.
+        # The old env var POLICY_REQUIRE_EVIDENCE_FOR_OUTBOUND_CLAIMS is no
+        # longer read; a warning is emitted if it is still present so operators
+        # know their configuration must be migrated.
+        default_factory=lambda: _env_safety_tighten(
+            "POLICY_DISABLE_EVIDENCE_GATE", default=True
         )
     )
+
+    def __post_init__(self) -> None:
+        import logging as _logging
+
+        _old = "POLICY_REQUIRE_EVIDENCE_FOR_OUTBOUND_CLAIMS"
+        if os.environ.get(_old) is not None:
+            _logging.getLogger(__name__).warning(
+                "Env var %s is no longer read. "
+                "To disable the evidence gate set POLICY_DISABLE_EVIDENCE_GATE=I_ACCEPT_RISK.",
+                _old,
+            )
 
 
 @dataclass
@@ -141,7 +223,7 @@ class PolicyConfig:
     evidence: EvidenceConfig = field(default_factory=EvidenceConfig)
 
     @classmethod
-    def from_yaml(cls, path: str) -> "PolicyConfig":
+    def from_yaml(cls, path: str) -> PolicyConfig:
         """Load config from a YAML file.  Requires PyYAML."""
         try:
             import yaml  # type: ignore[import-untyped]
@@ -199,7 +281,7 @@ class PolicyConfig:
         return cls(capital=capital, channel=channel, business=business, evidence=evidence)
 
     @classmethod
-    def load(cls) -> "PolicyConfig":
+    def load(cls) -> PolicyConfig:
         """Load from YAML if ``POLICY_CONFIG_PATH`` is set, else use env defaults."""
         path = os.environ.get("POLICY_CONFIG_PATH")
         if path:

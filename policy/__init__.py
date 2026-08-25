@@ -3,4 +3,4 @@
 from .engine import PolicyEngine
 from .models import Decision, Outcome, ReasonCode
 
-__all__ = ["PolicyEngine", "Decision", "Outcome", "ReasonCode"]
+__all__ = ["Decision", "Outcome", "PolicyEngine", "ReasonCode"]
