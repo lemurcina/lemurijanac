@@ -1,3 +1,5 @@
+"""CRM and outreach workflow primitives."""
+
 from .scoring import (
     DEFAULT_STRATEGY_CONFIGS,
     OpportunityScore,

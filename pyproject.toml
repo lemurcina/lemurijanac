@@ -21,6 +21,9 @@ dev = [
   "mypy>=1.11",
 ]
 
+[tool.setuptools.packages.find]
+include = ["shadow_market_desk*", "policy*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
