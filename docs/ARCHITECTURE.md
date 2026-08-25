@@ -35,3 +35,10 @@ Every material claim must preserve source URL/id, observed timestamp, extraction
 
 ## Initial deployment
 Python service + Postgres. Scheduled collectors run independently. FastAPI exposes a read/write control plane. A minimal dashboard reads the API. Everything must run locally with synthetic fixtures before any live integration.
+
+## Adding a new ingestion adapter
+1. Create a `SignalAdapter` implementation under `shadow_market_desk/ingestion/adapters`.
+2. Define deterministic normalization in `normalize_record` and generate a stable `dedup_key`.
+3. Populate `SourceEvidence` with `source_url`, `source_record_id`, raw metadata and observed timestamps so every `Signal` is traceable.
+4. Keep network access injectable via a `SourceClient` so tests can run on synthetic fixtures.
+5. Add unit tests for valid normalization, duplicate handling, malformed records, and source fetch failures.
