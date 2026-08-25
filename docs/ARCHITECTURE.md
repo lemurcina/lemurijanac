@@ -13,6 +13,15 @@
 - `api`: opportunities, strategies, outcomes, health
 - `ui`: operator dashboard
 
+## Opportunity graph domain extension points
+- Current implementation lives in `shadow_market_desk/opportunity_graph.py` and is transport/UI isolated.
+- `OpportunityGraphRepository` is the persistence boundary; `InMemoryOpportunityGraphRepository` is a deterministic reference implementation.
+- Postgres extension should map:
+  - entities/signals/needs/opportunities to core tables
+  - relationships (`relation`, `confidence`, `evidence_ids`) to join/edge tables
+  - evidence and merge/split lineage to append-only provenance/event tables
+- Merge and split operations must preserve evidence links and lineage relationships; no provenance deletion.
+
 ## Event model
 Events are append-only. Derived state can be rebuilt from events.
 
