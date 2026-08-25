@@ -134,7 +134,7 @@ def pause_strategy(strategy_id: str, repos: RepositoryBundle = Depends(get_repos
         action="strategy.pause",
         resource_type="strategy",
         resource_id=strategy_id,
-        metadata={"status": strategy.status},
+        metadata={"status": str(strategy.status)},
     )
     return PauseResumeResponse(strategy=strategy)
 
@@ -155,7 +155,7 @@ def resume_strategy(strategy_id: str, repos: RepositoryBundle = Depends(get_repo
         action="strategy.resume",
         resource_type="strategy",
         resource_id=strategy_id,
-        metadata={"status": strategy.status},
+        metadata={"status": str(strategy.status)},
     )
     return PauseResumeResponse(strategy=strategy)
 
@@ -202,7 +202,7 @@ def mark_outcome(
         action="outcome.mark",
         resource_type="outcome",
         resource_id=outcome_id,
-        metadata={"status": outcome.status},
+        metadata={"status": str(outcome.status)},
     )
     return OutcomeStateResponse(outcome=outcome)
 
@@ -228,7 +228,7 @@ def approve_channel_policy(
         action="channel_policy.approve",
         resource_type="channel_policy",
         resource_id=policy_id,
-        metadata={"status": policy.status},
+        metadata={"status": str(policy.status)},
     )
     return PolicyStateResponse(policy=policy)
 
@@ -252,6 +252,6 @@ def disable_channel_policy(
         action="channel_policy.disable",
         resource_type="channel_policy",
         resource_id=policy_id,
-        metadata={"status": policy.status},
+        metadata={"status": str(policy.status)},
     )
     return PolicyStateResponse(policy=policy)
