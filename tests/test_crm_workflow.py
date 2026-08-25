@@ -69,7 +69,7 @@ def test_opt_out_blocks_future_contacts() -> None:
         reply_text="Please unsubscribe and stop contacting us.",
     )
 
-    with pytest.raises(PolicyViolationError):
+    with pytest.raises(PolicyViolationError, match="contact opted out"):
         workflow.send_outreach(
             opportunity=opportunity,
             channel="email",
@@ -83,31 +83,39 @@ def test_opt_out_blocks_future_contacts() -> None:
 
 
 def test_max_attempt_limit_enforced() -> None:
-    workflow = _workflow(max_attempts=1)
+    workflow = _workflow(max_attempts=2)
+    opportunity = _priced_opportunity()
     now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 
-    first = _priced_opportunity()
     workflow.send_outreach(
-        opportunity=first,
+        opportunity=opportunity,
         channel="email",
         now=now,
         jurisdiction="US-CA",
         source="public_permit_feed",
-        offer_summary="one-time offer",
+        offer_summary="first offer",
         facts=[EvidenceFact(fact="Permit posted this week", source="city portal")],
         inferred_needs=[],
     )
+    workflow.send_outreach(
+        opportunity=opportunity,
+        channel="email",
+        now=now + timedelta(hours=1),
+        jurisdiction="US-CA",
+        source="public_permit_feed",
+        offer_summary="second offer",
+        facts=[],
+        inferred_needs=[],
+    )
 
-    second = _priced_opportunity()
-    second.contact_attempts = 1
     with pytest.raises(PolicyViolationError):
         workflow.send_outreach(
-            opportunity=second,
+            opportunity=opportunity,
             channel="email",
-            now=now + timedelta(hours=1),
+            now=now + timedelta(hours=2),
             jurisdiction="US-CA",
             source="public_permit_feed",
-            offer_summary="second attempt",
+            offer_summary="third attempt",
             facts=[],
             inferred_needs=[],
         )
@@ -137,6 +145,8 @@ def test_follow_up_scheduler_is_idempotent() -> None:
 
     assert task1 is task2
     assert len(workflow.scheduler.all_tasks()) == 1
+    follow_up_events = [event for event in workflow.audit_log.events if event.event_type == "FOLLOW_UP_SCHEDULED"]
+    assert len(follow_up_events) == 1
 
 
 def test_forbidden_claims_are_blocked() -> None:
@@ -155,6 +165,8 @@ def test_forbidden_claims_are_blocked() -> None:
             facts=[EvidenceFact(fact="Permit was filed yesterday", source="city portal")],
             inferred_needs=[],
         )
+    assert opportunity.state == OpportunityState.PRICED
+    assert workflow.audit_log.transitions == []
 
 
 def test_message_separates_facts_and_inference() -> None:
@@ -195,7 +207,7 @@ def test_every_transition_is_audited() -> None:
     workflow.process_reply(
         opportunity=opportunity,
         now=now + timedelta(minutes=5),
-        reply_text="Interested, can we discuss timeline?",
+        reply_text="Interested and ready to discuss timeline.",
     )
 
     path = [(t.from_state, t.to_state) for t in workflow.audit_log.transitions]
@@ -204,4 +216,5 @@ def test_every_transition_is_audited() -> None:
         (OpportunityState.OFFER_CREATED, OpportunityState.CONTACT_QUEUED),
         (OpportunityState.CONTACT_QUEUED, OpportunityState.CONTACTED),
         (OpportunityState.CONTACTED, OpportunityState.RESPONDED),
+        (OpportunityState.RESPONDED, OpportunityState.NEGOTIATING),
     ]

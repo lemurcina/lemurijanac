@@ -52,7 +52,6 @@ class ContactPolicy:
     allowed_channels: set[str]
     quiet_hours: tuple[int, int] = (21, 8)
     max_attempts: int = 3
-    opted_out: bool = False
     jurisdiction_constraints: set[str] = field(default_factory=set)
     source_constraints: set[str] = field(default_factory=set)
 
@@ -62,10 +61,11 @@ class ContactPolicy:
         channel: str,
         now: datetime,
         attempts: int,
+        opted_out: bool,
         jurisdiction: str | None,
         source: str | None,
     ) -> tuple[bool, str]:
-        if self.opted_out:
+        if opted_out:
             return False, "contact opted out"
         if channel not in self.allowed_channels:
             return False, "channel not allowed"
@@ -201,7 +201,9 @@ class ConversationTurn:
 
 @dataclass
 class ConversationMemory:
-    _threads: dict[tuple[str, str], list[ConversationTurn]] = field(default_factory=dict)
+    threads: dict[tuple[str, str], list[ConversationTurn]] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def add_turn(
         self,
@@ -213,10 +215,10 @@ class ConversationMemory:
         timestamp: datetime,
     ) -> None:
         key = (company_name, opportunity_id)
-        self._threads.setdefault(key, []).append(ConversationTurn(role=role, text=text, timestamp=timestamp))
+        self.threads.setdefault(key, []).append(ConversationTurn(role=role, text=text, timestamp=timestamp))
 
     def get_history(self, *, company_name: str, opportunity_id: str) -> list[ConversationTurn]:
-        return list(self._threads.get((company_name, opportunity_id), []))
+        return list(self.threads.get((company_name, opportunity_id), []))
 
 
 @dataclass(frozen=True)
@@ -262,7 +264,10 @@ class FollowUpTask:
 
 @dataclass
 class FollowUpScheduler:
-    _tasks: dict[str, FollowUpTask] = field(default_factory=dict)
+    tasks: dict[str, FollowUpTask] = field(default_factory=dict, init=False, repr=False)
+
+    def has_task(self, idempotency_key: str) -> bool:
+        return idempotency_key in self.tasks
 
     def schedule(
         self,
@@ -274,7 +279,7 @@ class FollowUpScheduler:
         channel: str,
         message: str,
     ) -> FollowUpTask:
-        existing = self._tasks.get(idempotency_key)
+        existing = self.tasks.get(idempotency_key)
         if existing:
             return existing
         task = FollowUpTask(
@@ -284,11 +289,11 @@ class FollowUpScheduler:
             channel=channel,
             message=message,
         )
-        self._tasks[idempotency_key] = task
+        self.tasks[idempotency_key] = task
         return task
 
     def all_tasks(self) -> list[FollowUpTask]:
-        return list(self._tasks.values())
+        return list(self.tasks.values())
 
 
 class ReplyType(str, Enum):
@@ -370,18 +375,12 @@ class CRMWorkflow:
             channel=channel,
             now=now,
             attempts=opportunity.contact_attempts,
+            opted_out=opportunity.opted_out,
             jurisdiction=jurisdiction,
             source=source,
         )
-        if not allowed or opportunity.opted_out:
+        if not allowed:
             raise PolicyViolationError(reason)
-        if opportunity.state == OpportunityState.PRICED:
-            self.transition(opportunity, OpportunityState.OFFER_CREATED, reason="offer prepared", now=now)
-        if opportunity.state == OpportunityState.OFFER_CREATED:
-            self.transition(opportunity, OpportunityState.CONTACT_QUEUED, reason="contact queued", now=now)
-        if opportunity.state != OpportunityState.CONTACT_QUEUED:
-            raise ValueError("opportunity must be in CONTACT_QUEUED state before send")
-
         message = self.message_generator.generate(
             company_name=opportunity.company_name,
             offer_summary=offer_summary,
@@ -389,6 +388,15 @@ class CRMWorkflow:
             inferred_needs=inferred_needs,
         )
         self.claim_checker.validate(message)
+
+        for current_state, next_state, reason_text in (
+            (OpportunityState.PRICED, OpportunityState.OFFER_CREATED, "offer prepared"),
+            (OpportunityState.OFFER_CREATED, OpportunityState.CONTACT_QUEUED, "contact queued"),
+        ):
+            if opportunity.state == current_state:
+                self.transition(opportunity, next_state, reason=reason_text, now=now)
+        if opportunity.state not in {OpportunityState.CONTACT_QUEUED, OpportunityState.CONTACTED}:
+            raise ValueError("opportunity must be in CONTACT_QUEUED or CONTACTED state before send")
 
         send = self.transport.send(
             opportunity_id=opportunity.opportunity_id,
@@ -405,7 +413,8 @@ class CRMWorkflow:
             text=message.text,
             timestamp=now,
         )
-        self.transition(opportunity, OpportunityState.CONTACTED, reason="sandbox send recorded", now=now)
+        if opportunity.state == OpportunityState.CONTACT_QUEUED:
+            self.transition(opportunity, OpportunityState.CONTACTED, reason="sandbox send recorded", now=now)
         self.audit_log.record_event(
             event_type="SANDBOX_SEND_RECORDED",
             now=now,
@@ -423,6 +432,7 @@ class CRMWorkflow:
         channel: str,
         message: str,
     ) -> FollowUpTask:
+        is_new_task = not self.scheduler.has_task(idempotency_key)
         task = self.scheduler.schedule(
             idempotency_key=idempotency_key,
             opportunity_id=opportunity.opportunity_id,
@@ -431,11 +441,12 @@ class CRMWorkflow:
             channel=channel,
             message=message,
         )
-        self.audit_log.record_event(
-            event_type="FOLLOW_UP_SCHEDULED",
-            now=base_time,
-            details={"idempotency_key": idempotency_key, "opportunity_id": opportunity.opportunity_id},
-        )
+        if is_new_task:
+            self.audit_log.record_event(
+                event_type="FOLLOW_UP_SCHEDULED",
+                now=base_time,
+                details={"idempotency_key": idempotency_key, "opportunity_id": opportunity.opportunity_id},
+            )
         return task
 
     def process_reply(self, *, opportunity: Opportunity, now: datetime, reply_text: str) -> ReplyType:
@@ -452,12 +463,14 @@ class CRMWorkflow:
 
         if reply_type == ReplyType.OPT_OUT:
             opportunity.opted_out = True
-            self.policy.opted_out = True
-            self.transition(opportunity, OpportunityState.LOST, reason="contact opted out", now=now)
+            if OpportunityState.LOST in ALLOWED_TRANSITIONS.get(opportunity.state, set()):
+                self.transition(opportunity, OpportunityState.LOST, reason="contact opted out", now=now)
         elif reply_type in {ReplyType.WRONG_PERSON, ReplyType.NO_FIT}:
-            self.transition(opportunity, OpportunityState.LOST, reason=f"reply={reply_type.value}", now=now)
-        elif reply_type == ReplyType.OBJECTION:
-            self.transition(opportunity, OpportunityState.NEGOTIATING, reason="objection handled", now=now)
+            if OpportunityState.LOST in ALLOWED_TRANSITIONS.get(opportunity.state, set()):
+                self.transition(opportunity, OpportunityState.LOST, reason=f"reply={reply_type.value}", now=now)
+        elif reply_type in {ReplyType.OBJECTION, ReplyType.POSITIVE}:
+            if OpportunityState.NEGOTIATING in ALLOWED_TRANSITIONS.get(opportunity.state, set()):
+                self.transition(opportunity, OpportunityState.NEGOTIATING, reason=f"reply={reply_type.value}", now=now)
         self.audit_log.record_event(
             event_type="REPLY_CLASSIFIED",
             now=now,
