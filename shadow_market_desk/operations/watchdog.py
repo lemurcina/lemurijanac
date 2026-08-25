@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Iterable
 
 
 class ActionKind(str, Enum):
@@ -90,8 +90,16 @@ _OWNER_ONLY = {
 
 def classify_owner_intervention(action: ActionKind) -> InterventionDecision:
     if action in _OWNER_ONLY:
-        return InterventionDecision(action, ActionRisk.OWNER_ONLY, "financial/legal/irreversible judgment")
-    return InterventionDecision(action, ActionRisk.ROUTINE, "safe operational action when normal evidence gates pass")
+        return InterventionDecision(
+            action,
+            ActionRisk.OWNER_ONLY,
+            "financial/legal/irreversible judgment",
+        )
+    return InterventionDecision(
+        action,
+        ActionRisk.ROUTINE,
+        "safe operational action when normal evidence gates pass",
+    )
 
 
 def _raise_supervision(level: str) -> str:
@@ -107,28 +115,83 @@ def evaluate_watchdog(item: WatchdogInput) -> WatchdogReport:
     findings: list[WatchdogFinding] = []
 
     if item.consecutive_no_progress_count >= 2:
-        findings.append(WatchdogFinding("NO_PROGRESS_X2", "high", "no-progress", "change recovery strategy; increase supervision on recurrence"))
+        findings.append(
+            WatchdogFinding(
+                "NO_PROGRESS_X2",
+                "high",
+                "no-progress",
+                "change recovery strategy; increase supervision on recurrence",
+            )
+        )
 
     if item.busy and not item.evidence.meaningful_output:
-        findings.append(WatchdogFinding("BUSY_WITHOUT_OUTPUT", "medium", "vanity-activity", "require evidence artifact before next run"))
+        findings.append(
+            WatchdogFinding(
+                "BUSY_WITHOUT_OUTPUT",
+                "medium",
+                "vanity-activity",
+                "require evidence artifact before next run",
+            )
+        )
 
-    if item.failure_signature and item.failure_signature == item.previous_failure_signature and item.retry_count_same_signature >= 1:
-        findings.append(WatchdogFinding("UNCHANGED_FAILURE_RETRY", "high", "unchanged-retry", "stop retry loop and choose a different recovery path"))
+    same_failure = (
+        item.failure_signature
+        and item.failure_signature == item.previous_failure_signature
+        and item.retry_count_same_signature >= 1
+    )
+    if same_failure:
+        findings.append(
+            WatchdogFinding(
+                "UNCHANGED_FAILURE_RETRY",
+                "high",
+                "unchanged-retry",
+                "stop retry loop and choose a different recovery path",
+            )
+        )
 
     state = item.current_state.upper()
     if state in {"READY", "DONE"}:
-        has_required_proof = bool(item.evidence.exact_sha and item.evidence.ci_green and item.evidence.evidence_ref)
+        has_required_proof = bool(
+            item.evidence.exact_sha
+            and item.evidence.ci_green
+            and item.evidence.evidence_ref
+        )
         if state == "DONE":
             has_required_proof = has_required_proof and item.evidence.browser_proof
         if not has_required_proof:
-            findings.append(WatchdogFinding("READY_DONE_WITHOUT_PROOF", "critical", "false-done", "revert state to STALLED/FAILED until exact-SHA and route/browser proof exist"))
+            findings.append(
+                WatchdogFinding(
+                    "READY_DONE_WITHOUT_PROOF",
+                    "critical",
+                    "false-done",
+                    "revert state to STALLED/FAILED until exact-SHA and route/browser proof exist",
+                )
+            )
 
-    if item.revenue_blocker_priority is not None and item.priority > item.revenue_blocker_priority:
-        findings.append(WatchdogFinding("LOW_VALUE_DURING_REVENUE_BLOCKER", "high", "priority-conflict", "pause/requeue unless this work directly resolves the blocker"))
+    if (
+        item.revenue_blocker_priority is not None
+        and item.priority > item.revenue_blocker_priority
+    ):
+        findings.append(
+            WatchdogFinding(
+                "LOW_VALUE_DURING_REVENUE_BLOCKER",
+                "high",
+                "priority-conflict",
+                "pause/requeue unless this work directly resolves the blocker",
+            )
+        )
 
-    repeated = any(f.code in {"NO_PROGRESS_X2", "UNCHANGED_FAILURE_RETRY"} for f in findings)
-    supervision = _raise_supervision(item.supervision_level) if repeated else item.supervision_level
-    escalation = bool(findings) and item.recovery_attempted and any(f.severity == "critical" for f in findings)
+    repeated = any(
+        f.code in {"NO_PROGRESS_X2", "UNCHANGED_FAILURE_RETRY"} for f in findings
+    )
+    supervision = (
+        _raise_supervision(item.supervision_level) if repeated else item.supervision_level
+    )
+    escalation = (
+        bool(findings)
+        and item.recovery_attempted
+        and any(f.severity == "critical" for f in findings)
+    )
 
     return WatchdogReport(
         agent_or_workflow=item.agent_or_workflow,
@@ -141,8 +204,16 @@ def evaluate_watchdog(item: WatchdogInput) -> WatchdogReport:
 
 
 def render_markdown_report(reports: Iterable[WatchdogReport]) -> str:
-    rows = ["# Owner Friction + Watchdog", "", "| Work | State | Findings | Supervision | Evidence |", "|---|---|---|---|---|"]
+    rows = [
+        "# Owner Friction + Watchdog",
+        "",
+        "| Work | State | Findings | Supervision | Evidence |",
+        "|---|---|---|---|---|",
+    ]
     for report in reports:
         findings = ", ".join(f.code for f in report.findings) or "PASS"
-        rows.append(f"| {report.agent_or_workflow} | {report.current_state} | {findings} | {report.supervision_level} | {report.evidence_ref or '-'} |")
+        rows.append(
+            f"| {report.agent_or_workflow} | {report.current_state} | "
+            f"{findings} | {report.supervision_level} | {report.evidence_ref or '-'} |"
+        )
     return "\n".join(rows) + "\n"
