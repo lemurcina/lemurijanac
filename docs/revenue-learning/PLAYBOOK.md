@@ -8,7 +8,7 @@
 ## P-01 — Google Business Profile completeness is a prerequisite for Local Pack visibility
 
 **Sources:**
-- Google Search Central — "How Google determines local ranking" (https://support.google.com/business/answer/7091 — updated periodically; verified present Aug 2026)
+- Google Business Profile Help — "How Google determines local ranking" (https://support.google.com/business/answer/7091 — updated periodically; verified present Aug 2026)
 - Google Business Profile Help — "Complete your Business Profile" (https://support.google.com/business/answer/3038063)
 
 **Lesson:** GBP profiles with complete name, address, phone, categories, hours, photos, and service areas rank higher in the Local Pack than incomplete profiles. This is a documented Google ranking signal, not a practitioner claim.
