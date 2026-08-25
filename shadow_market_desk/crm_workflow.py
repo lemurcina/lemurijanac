@@ -4,7 +4,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
+from typing import Protocol
 from uuid import uuid4
+
+from policy import Decision, Outcome, PolicyEngine
 
 
 class OpportunityState(str, Enum):
@@ -47,45 +50,67 @@ class InferredNeed:
     signal: str
 
 
-@dataclass
-class ContactPolicy:
-    allowed_channels: set[str]
-    quiet_hours: tuple[int, int] = (21, 8)
-    max_attempts: int = 3
-    jurisdiction_constraints: set[str] = field(default_factory=set)
-    source_constraints: set[str] = field(default_factory=set)
-
-    def permits(
+class OutboundPolicyAuthorizer(Protocol):
+    def authorize_outreach(
         self,
         *,
+        opportunity_id: str,
         channel: str,
         now: datetime,
         attempts: int,
         opted_out: bool,
         jurisdiction: str | None,
-        source: str | None,
-    ) -> tuple[bool, str]:
-        if opted_out:
-            return False, "contact opted out"
-        if channel not in self.allowed_channels:
-            return False, "channel not allowed"
-        if attempts >= self.max_attempts:
-            return False, "max attempts reached"
-        if self.jurisdiction_constraints and jurisdiction not in self.jurisdiction_constraints:
-            return False, "jurisdiction not allowed"
-        if self.source_constraints and source not in self.source_constraints:
-            return False, "source not allowed"
-        if self._is_quiet_hour(now.hour):
-            return False, "quiet hours"
-        return True, "allowed"
+        source_terms_compliant: bool,
+        facts: Iterable[EvidenceFact],
+        inferred_needs: Iterable[InferredNeed],
+    ) -> Decision: ...
 
-    def _is_quiet_hour(self, hour: int) -> bool:
-        start, end = self.quiet_hours
-        if start == end:
-            return False
-        if start < end:
-            return start <= hour < end
-        return hour >= start or hour < end
+
+@dataclass
+class CanonicalPolicyAdapter:
+    engine: PolicyEngine
+
+    def authorize_outreach(
+        self,
+        *,
+        opportunity_id: str,
+        channel: str,
+        now: datetime,
+        attempts: int,
+        opted_out: bool,
+        jurisdiction: str | None,
+        source_terms_compliant: bool,
+        facts: Iterable[EvidenceFact],
+        inferred_needs: Iterable[InferredNeed],
+    ) -> Decision:
+        decision = self.engine.check_channel(
+            channel=channel,
+            recipient_id=opportunity_id,
+            attempt_count=attempts,
+            local_hour=now.hour,
+            jurisdiction=jurisdiction or "",
+            opted_out=opted_out,
+            source_terms_compliant=source_terms_compliant,
+        )
+        if decision.outcome != Outcome.ALLOW:
+            return decision
+        for fact in facts:
+            evidence_decision = self.engine.check_evidence(
+                claim=fact.fact,
+                evidence_ids=[fact.source],
+                is_inference=False,
+            )
+            if evidence_decision.outcome != Outcome.ALLOW:
+                return evidence_decision
+        for need in inferred_needs:
+            evidence_decision = self.engine.check_evidence(
+                claim=need.need,
+                evidence_ids=[],
+                is_inference=True,
+            )
+            if evidence_decision.outcome != Outcome.ALLOW:
+                return evidence_decision
+        return decision
 
 
 @dataclass(frozen=True)
@@ -327,7 +352,7 @@ class PolicyViolationError(ValueError):
 
 @dataclass
 class CRMWorkflow:
-    policy: ContactPolicy
+    policy: OutboundPolicyAuthorizer
     message_generator: MessageGenerator
     claim_checker: ForbiddenClaimChecker
     transport: SandboxTransport
@@ -366,26 +391,36 @@ class CRMWorkflow:
         channel: str,
         now: datetime,
         jurisdiction: str | None,
-        source: str | None,
+        source_terms_compliant: bool,
         offer_summary: str,
         facts: Iterable[EvidenceFact],
         inferred_needs: Iterable[InferredNeed],
     ) -> SandboxSendRecord:
-        allowed, reason = self.policy.permits(
+        facts_list = tuple(facts)
+        inferred_needs_list = tuple(inferred_needs)
+        decision = self.policy.authorize_outreach(
+            opportunity_id=opportunity.opportunity_id,
             channel=channel,
             now=now,
             attempts=opportunity.contact_attempts,
             opted_out=opportunity.opted_out,
             jurisdiction=jurisdiction,
-            source=source,
+            source_terms_compliant=source_terms_compliant,
+            facts=facts_list,
+            inferred_needs=inferred_needs_list,
         )
-        if not allowed:
-            raise PolicyViolationError(reason)
+        self.audit_log.record_event(
+            event_type="OUTREACH_POLICY_DECISION",
+            now=now,
+            details={"outcome": decision.outcome.value, "reason": decision.reason.value},
+        )
+        if decision.outcome != Outcome.ALLOW:
+            raise PolicyViolationError(f"{decision.outcome.value}:{decision.reason.value}")
         message = self.message_generator.generate(
             company_name=opportunity.company_name,
             offer_summary=offer_summary,
-            facts=facts,
-            inferred_needs=inferred_needs,
+            facts=facts_list,
+            inferred_needs=inferred_needs_list,
         )
         self.claim_checker.validate(message)
 

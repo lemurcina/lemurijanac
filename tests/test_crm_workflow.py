@@ -4,9 +4,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from policy.config import ChannelConfig, EvidenceConfig, PolicyConfig
+from policy.engine import PolicyEngine
+from policy.models import Decision, Outcome, ReasonCode
 from shadow_market_desk.crm_workflow import (
     AuditLog,
-    ContactPolicy,
+    CanonicalPolicyAdapter,
     ConversationMemory,
     CRMWorkflow,
     EvidenceFact,
@@ -22,15 +25,28 @@ from shadow_market_desk.crm_workflow import (
 )
 
 
+class RequireReviewPolicyAdapter:
+    def authorize_outreach(self, **kwargs: object) -> Decision:
+        return Decision(
+            outcome=Outcome.REQUIRE_REVIEW,
+            reason=ReasonCode.IRREVERSIBLE_ACTION,
+            details="manual review required",
+        )
+
+
 def _workflow(*, max_attempts: int = 3, forbidden_claims: set[str] | None = None) -> CRMWorkflow:
-    return CRMWorkflow(
-        policy=ContactPolicy(
-            allowed_channels={"email"},
-            quiet_hours=(0, 0),
-            max_attempts=max_attempts,
-            jurisdiction_constraints={"US-CA"},
-            source_constraints={"public_permit_feed"},
+    policy = PolicyConfig(
+        channel=ChannelConfig(
+            enabled_channels=["email"],
+            max_attempts_per_recipient=max_attempts,
+            quiet_hours_start=0,
+            quiet_hours_end=0,
+            blocked_jurisdictions=[],
         ),
+        evidence=EvidenceConfig(require_evidence_for_outbound_claims=True),
+    )
+    return CRMWorkflow(
+        policy=CanonicalPolicyAdapter(engine=PolicyEngine(policy)),
         message_generator=MessageGenerator(),
         claim_checker=ForbiddenClaimChecker(forbidden_claims=forbidden_claims),
         transport=SandboxTransport(),
@@ -58,7 +74,7 @@ def test_opt_out_blocks_future_contacts() -> None:
         channel="email",
         now=now,
         jurisdiction="US-CA",
-        source="public_permit_feed",
+        source_terms_compliant=True,
         offer_summary="fast permit-closeout support",
         facts=[EvidenceFact(fact="Tenant improvement permit #123 is active", source="city portal")],
         inferred_needs=[InferredNeed(need="inspection scheduling help", confidence=0.78, signal="permit age")],
@@ -69,13 +85,13 @@ def test_opt_out_blocks_future_contacts() -> None:
         reply_text="Please unsubscribe and stop contacting us.",
     )
 
-    with pytest.raises(PolicyViolationError, match="contact opted out"):
+    with pytest.raises(PolicyViolationError, match="DENY:RECIPIENT_OPT_OUT"):
         workflow.send_outreach(
             opportunity=opportunity,
             channel="email",
             now=now + timedelta(days=1),
             jurisdiction="US-CA",
-            source="public_permit_feed",
+            source_terms_compliant=True,
             offer_summary="follow-up",
             facts=[],
             inferred_needs=[],
@@ -92,7 +108,7 @@ def test_max_attempt_limit_enforced() -> None:
         channel="email",
         now=now,
         jurisdiction="US-CA",
-        source="public_permit_feed",
+        source_terms_compliant=True,
         offer_summary="first offer",
         facts=[EvidenceFact(fact="Permit posted this week", source="city portal")],
         inferred_needs=[],
@@ -102,19 +118,19 @@ def test_max_attempt_limit_enforced() -> None:
         channel="email",
         now=now + timedelta(hours=1),
         jurisdiction="US-CA",
-        source="public_permit_feed",
+        source_terms_compliant=True,
         offer_summary="second offer",
         facts=[],
         inferred_needs=[],
     )
 
-    with pytest.raises(PolicyViolationError):
+    with pytest.raises(PolicyViolationError, match="DENY:ATTEMPT_LIMIT_REACHED"):
         workflow.send_outreach(
             opportunity=opportunity,
             channel="email",
             now=now + timedelta(hours=2),
             jurisdiction="US-CA",
-            source="public_permit_feed",
+            source_terms_compliant=True,
             offer_summary="third attempt",
             facts=[],
             inferred_needs=[],
@@ -160,7 +176,7 @@ def test_forbidden_claims_are_blocked() -> None:
             channel="email",
             now=now,
             jurisdiction="US-CA",
-            source="public_permit_feed",
+            source_terms_compliant=True,
             offer_summary="guaranteed results for inspection turnaround",
             facts=[EvidenceFact(fact="Permit was filed yesterday", source="city portal")],
             inferred_needs=[],
@@ -179,7 +195,7 @@ def test_message_separates_facts_and_inference() -> None:
         channel="email",
         now=now,
         jurisdiction="US-CA",
-        source="public_permit_feed",
+        source_terms_compliant=True,
         offer_summary="permit-closeout support",
         facts=[EvidenceFact(fact="Permit #A100 is open", source="city portal")],
         inferred_needs=[InferredNeed(need="faster inspection prep", confidence=0.64, signal="open status age")],
@@ -199,7 +215,7 @@ def test_every_transition_is_audited() -> None:
         channel="email",
         now=now,
         jurisdiction="US-CA",
-        source="public_permit_feed",
+        source_terms_compliant=True,
         offer_summary="permit-closeout support",
         facts=[EvidenceFact(fact="Permit #A100 is open", source="city portal")],
         inferred_needs=[],
@@ -218,3 +234,48 @@ def test_every_transition_is_audited() -> None:
         (OpportunityState.CONTACTED, OpportunityState.RESPONDED),
         (OpportunityState.RESPONDED, OpportunityState.NEGOTIATING),
     ]
+
+
+def test_denied_policy_decision_prevents_contacted_transition() -> None:
+    workflow = _workflow()
+    opportunity = _priced_opportunity()
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+    with pytest.raises(PolicyViolationError, match="DENY:SOURCE_TERMS_VIOLATION"):
+        workflow.send_outreach(
+            opportunity=opportunity,
+            channel="email",
+            now=now,
+            jurisdiction="US-CA",
+            source_terms_compliant=False,
+            offer_summary="permit-closeout support",
+            facts=[EvidenceFact(fact="Permit #A100 is open", source="city portal")],
+            inferred_needs=[],
+        )
+
+    assert opportunity.state == OpportunityState.PRICED
+    assert workflow.transport.sends == []
+    assert all(t.to_state != OpportunityState.CONTACTED for t in workflow.audit_log.transitions)
+
+
+def test_require_review_prevents_contacted_transition() -> None:
+    workflow = _workflow()
+    workflow.policy = RequireReviewPolicyAdapter()
+    opportunity = _priced_opportunity()
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+    with pytest.raises(PolicyViolationError, match="REQUIRE_REVIEW:IRREVERSIBLE_ACTION"):
+        workflow.send_outreach(
+            opportunity=opportunity,
+            channel="email",
+            now=now,
+            jurisdiction="US-CA",
+            source_terms_compliant=True,
+            offer_summary="permit-closeout support",
+            facts=[EvidenceFact(fact="Permit #A100 is open", source="city portal")],
+            inferred_needs=[],
+        )
+
+    assert opportunity.state == OpportunityState.PRICED
+    assert workflow.transport.sends == []
+    assert all(t.to_state != OpportunityState.CONTACTED for t in workflow.audit_log.transitions)
