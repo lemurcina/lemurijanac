@@ -65,8 +65,8 @@ def test_merge_preserves_provenance_and_updates_queries() -> None:
     merged_opps = repo.opportunities_by_entity(vendor_a)
     assert [opp.id for opp in merged_opps] == [opportunity_id]
     assert any(rel.relation == "MERGED_FROM" for rel in repo.relationships)
-    assert any(e.source_ref == "merge" for e in repo.evidences)
-    assert repo.opportunities_by_entity(vendor_b) == [repo._opportunities[opportunity_id]]
+    assert any(e.source_ref == "merge" for e in repo.evidence_items)
+    assert repo.opportunities_by_entity(vendor_b) == merged_opps
 
 
 def test_split_reassigns_identity_and_tracks_lineage() -> None:

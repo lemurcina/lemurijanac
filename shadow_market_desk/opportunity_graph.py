@@ -199,7 +199,11 @@ class InMemoryOpportunityGraphRepository(OpportunityGraphRepository):
 
     def _entity_or_merged_target(self, entity_id: str) -> str:
         entity = self._entities[entity_id]
+        visited = {entity_id}
         while entity.merged_into is not None:
+            if entity.merged_into in visited:
+                raise ValueError("merge lineage contains a cycle")
+            visited.add(entity.merged_into)
             entity = self._entities[entity.merged_into]
         return entity.id
 
@@ -247,7 +251,7 @@ class InMemoryOpportunityGraphRepository(OpportunityGraphRepository):
         confidence: float,
     ) -> str:
         self._store_evidence(evidence)
-        relationship_id = _stable_id("rel", left_id, right_id, relation, evidence.id)
+        relationship_id = _stable_id("rel", left_id, right_id, relation)
         existing = self._relationships.get(relationship_id)
         if existing is None:
             self._relationships[relationship_id] = Relationship(
@@ -323,16 +327,28 @@ class InMemoryOpportunityGraphRepository(OpportunityGraphRepository):
             right = canonical_id if relationship.right_id == duplicate_id else relationship.right_id
             if (left, right) == (relationship.left_id, relationship.right_id):
                 continue
-            merged_id = _stable_id("rel", left, right, relationship.relation, "|".join(relationship.evidence_ids))
-            self._relationships[merged_id] = Relationship(
-                id=merged_id,
-                left_id=left,
-                right_id=right,
-                relation=relationship.relation,
-                confidence=relationship.confidence,
-                evidence_ids=relationship.evidence_ids,
-            )
-            del self._relationships[relationship_id]
+            merged_id = _stable_id("rel", left, right, relationship.relation)
+            existing = self._relationships.get(merged_id)
+            if existing is None:
+                self._relationships[merged_id] = Relationship(
+                    id=merged_id,
+                    left_id=left,
+                    right_id=right,
+                    relation=relationship.relation,
+                    confidence=relationship.confidence,
+                    evidence_ids=relationship.evidence_ids,
+                )
+            else:
+                self._relationships[merged_id] = Relationship(
+                    id=merged_id,
+                    left_id=left,
+                    right_id=right,
+                    relation=relationship.relation,
+                    confidence=max(existing.confidence, relationship.confidence),
+                    evidence_ids=tuple(sorted({*existing.evidence_ids, *relationship.evidence_ids})),
+                )
+            if merged_id != relationship_id:
+                del self._relationships[relationship_id]
 
         for opportunity_id, opportunity in list(self._opportunities.items()):
             buyer = canonical_id if opportunity.buyer_entity_id == duplicate_id else opportunity.buyer_entity_id
@@ -356,13 +372,21 @@ class InMemoryOpportunityGraphRepository(OpportunityGraphRepository):
             raise ValueError("identity_to_split must already belong to source_entity_id")
 
         self._store_evidence(split_evidence)
-        split_entity_id = _stable_id("ent", identity_to_split.fingerprint, "split")
-        if split_entity_id not in self._entities:
+        split_entity_id = _stable_id("ent", source_id, identity_to_split.fingerprint, "split")
+        existing = self._entities.get(split_entity_id)
+        if existing is None:
             self._entities[split_entity_id] = Entity(
                 id=split_entity_id,
                 identities=[identity_to_split],
                 split_from=source_id,
             )
+        else:
+            if existing.merged_into is not None:
+                raise ValueError("cannot split into an entity that is already merged")
+            if identity_to_split not in existing.identities:
+                existing.identities.append(identity_to_split)
+            if existing.split_from is None:
+                existing.split_from = source_id
         source.identities = [identity for identity in source.identities if identity != identity_to_split]
         self._fingerprint_to_entity[identity_to_split.fingerprint] = split_entity_id
         self._add_relationship(split_entity_id, source_id, "SPLIT_FROM", split_evidence, split_evidence.confidence)
@@ -398,6 +422,7 @@ class InMemoryOpportunityGraphRepository(OpportunityGraphRepository):
         return self._candidate_relationships(need_id, "CANDIDATE_BUYER")
 
     def stale_evidence(self, older_than: timedelta, now: datetime | None = None) -> list[Evidence]:
+        """Return all evidence records older than the threshold, including lineage evidence."""
         reference_now = now or datetime.now(tz=UTC)
         threshold = reference_now - older_than
         stale = [evidence for evidence in self._evidence.values() if evidence.observed_at < threshold]
@@ -429,5 +454,5 @@ class InMemoryOpportunityGraphRepository(OpportunityGraphRepository):
         return tuple(sorted(self._relationships.values(), key=lambda relationship: relationship.id))
 
     @property
-    def evidences(self) -> Iterable[Evidence]:
+    def evidence_items(self) -> Iterable[Evidence]:
         return tuple(sorted(self._evidence.values(), key=lambda evidence: evidence.id))
