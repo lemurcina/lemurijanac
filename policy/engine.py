@@ -432,6 +432,8 @@ class PolicyEngine:
 
         Supports overnight ranges (e.g. start=21, end=8).
         """
+        if start == end:
+            return False
         if start <= end:
             # Normal range (e.g. 2–6)
             return start <= hour < end

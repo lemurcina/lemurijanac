@@ -34,8 +34,13 @@ class RequireReviewPolicyAdapter:
         )
 
 
-def _workflow(*, max_attempts: int = 3, forbidden_claims: set[str] | None = None) -> CRMWorkflow:
-    policy = PolicyConfig(
+def _workflow(
+    *,
+    max_attempts: int = 3,
+    forbidden_claims: set[str] | None = None,
+    policy_override: object | None = None,
+) -> CRMWorkflow:
+    config = PolicyConfig(
         channel=ChannelConfig(
             enabled_channels=["email"],
             max_attempts_per_recipient=max_attempts,
@@ -46,7 +51,11 @@ def _workflow(*, max_attempts: int = 3, forbidden_claims: set[str] | None = None
         evidence=EvidenceConfig(require_evidence_for_outbound_claims=True),
     )
     return CRMWorkflow(
-        policy=CanonicalPolicyAdapter(engine=PolicyEngine(policy)),
+        policy=(
+            policy_override
+            if policy_override is not None
+            else CanonicalPolicyAdapter(engine=PolicyEngine(config))
+        ),
         message_generator=MessageGenerator(),
         claim_checker=ForbiddenClaimChecker(forbidden_claims=forbidden_claims),
         transport=SandboxTransport(),
@@ -259,8 +268,7 @@ def test_denied_policy_decision_prevents_contacted_transition() -> None:
 
 
 def test_require_review_prevents_contacted_transition() -> None:
-    workflow = _workflow()
-    workflow.policy = RequireReviewPolicyAdapter()
+    workflow = _workflow(policy_override=RequireReviewPolicyAdapter())
     opportunity = _priced_opportunity()
     now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 
