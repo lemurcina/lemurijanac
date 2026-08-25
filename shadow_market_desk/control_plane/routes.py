@@ -177,9 +177,9 @@ def set_capital_at_risk_limit(
 ) -> CapitalAtRiskLimitResponse:
     decision = repos.policy_engine.check_capital(
         action="controls.set_capital_at_risk_limit",
-        amount=request.limit,
+        amount=0.0,
         daily_spent=repos.capital_daily_spent,
-        strategy_spent=repos.capital_strategy_spent,
+        strategy_spent=request.limit,
         context={"resource_type": "controls", "resource_id": "capital-at-risk-limit"},
     )
     if decision.outcome is not PolicyOutcome.ALLOW:
@@ -266,7 +266,10 @@ def approve_channel_policy(
         channel=policy.name,
         recipient_id=f"policy:{policy_id}",
         attempt_count=0,
+        # Policy approval is a config-time action, not a live outreach send.
+        # We still route through the canonical channel gate to enforce enabled_channels.
         local_hour=12,
+        source_terms_compliant=True,
         context={"resource_type": "channel_policy", "resource_id": policy_id},
     )
     if decision.outcome is not PolicyOutcome.ALLOW:

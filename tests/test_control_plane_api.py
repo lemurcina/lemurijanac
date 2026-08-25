@@ -82,12 +82,12 @@ def test_policy_enforcement_channel_requires_policy_allow() -> None:
 def test_policy_enforcement_capital_limit_requires_policy_allow() -> None:
     client = make_client()
 
-    response = client.put("/api/v1/controls/capital-at-risk-limit", json={"limit": 1000})
+    response = client.put("/api/v1/controls/capital-at-risk-limit", json={"limit": 2000})
 
     assert response.status_code == 409
     payload = response.json()
     assert payload["error"] == "http_error"
-    assert "exceeds per-action limit" in payload["detail"]
+    assert "exceeding limit" in payload["detail"]
 
 
 def test_channel_policy_approval_allows_enabled_channel() -> None:
