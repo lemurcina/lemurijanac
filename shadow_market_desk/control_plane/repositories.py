@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from itertools import islice
 from uuid import uuid4
 
+from policy import PolicyEngine
+
 from .models import (
     Allocation,
     AuditEvent,
@@ -145,7 +147,10 @@ class RepositoryBundle:
     outcomes: InMemoryOutcomeRepository
     channel_policies: InMemoryChannelPolicyRepository
     audits: InMemoryAuditRepository
+    policy_engine: PolicyEngine
     capital_at_risk_limit: float
+    capital_daily_spent: float = 0.0
+    capital_strategy_spent: float = 0.0
 
     def set_capital_at_risk_limit(self, limit: float) -> float:
         self.capital_at_risk_limit = limit
@@ -219,5 +224,6 @@ def build_default_repositories() -> RepositoryBundle:
             ]
         ),
         audits=InMemoryAuditRepository(),
+        policy_engine=PolicyEngine(),
         capital_at_risk_limit=15000,
     )

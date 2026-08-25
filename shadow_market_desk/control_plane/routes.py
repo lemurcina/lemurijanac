@@ -4,6 +4,8 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from policy import Outcome as PolicyOutcome
+
 from .dependencies import get_repositories
 from .models import (
     Allocation,
@@ -33,6 +35,10 @@ router = APIRouter(prefix="/api/v1")
 
 def _page_params(offset: int, limit: int) -> FilterParams:
     return FilterParams(offset=offset, limit=limit)
+
+
+def _policy_metadata(outcome: PolicyOutcome, reason: str, detail: str) -> dict[str, str]:
+    return {"policy_outcome": outcome.value, "policy_reason": reason, "policy_detail": detail}
 
 
 @router.get(
@@ -169,12 +175,39 @@ def set_capital_at_risk_limit(
     request: SetCapitalAtRiskLimitRequest,
     repos: RepositoryBundle = Depends(get_repositories),
 ) -> CapitalAtRiskLimitResponse:
+    decision = repos.policy_engine.check_capital(
+        action="controls.set_capital_at_risk_limit",
+        amount=request.limit,
+        daily_spent=repos.capital_daily_spent,
+        strategy_spent=repos.capital_strategy_spent,
+        context={"resource_type": "controls", "resource_id": "capital-at-risk-limit"},
+    )
+    if decision.outcome is not PolicyOutcome.ALLOW:
+        repos.audits.add(
+            action="controls.set_capital_at_risk_limit.denied",
+            resource_type="controls",
+            resource_id="capital-at-risk-limit",
+            metadata=_policy_metadata(
+                outcome=decision.outcome,
+                reason=decision.reason.value,
+                detail=decision.details,
+            ),
+        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=decision.details)
+
     limit = repos.set_capital_at_risk_limit(request.limit)
     repos.audits.add(
         action="controls.set_capital_at_risk_limit",
         resource_type="controls",
         resource_id="capital-at-risk-limit",
-        metadata={"limit": f"{limit:.2f}"},
+        metadata={
+            "limit": f"{limit:.2f}",
+            **_policy_metadata(
+                outcome=decision.outcome,
+                reason=decision.reason.value,
+                detail=decision.details,
+            ),
+        },
     )
     return CapitalAtRiskLimitResponse(limit=limit)
 
@@ -221,14 +254,48 @@ def approve_channel_policy(
     if policy is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel policy not found")
     if policy.status == ChannelPolicyStatus.DISABLED:
+        repos.audits.add(
+            action="channel_policy.approve.denied",
+            resource_type="channel_policy",
+            resource_id=policy_id,
+            metadata={"reason": "disabled policy cannot be approved"},
+        )
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="disabled policy cannot be approved")
+
+    decision = repos.policy_engine.check_channel(
+        channel=policy.name,
+        recipient_id=f"policy:{policy_id}",
+        attempt_count=0,
+        local_hour=12,
+        context={"resource_type": "channel_policy", "resource_id": policy_id},
+    )
+    if decision.outcome is not PolicyOutcome.ALLOW:
+        repos.audits.add(
+            action="channel_policy.approve.denied",
+            resource_type="channel_policy",
+            resource_id=policy_id,
+            metadata=_policy_metadata(
+                outcome=decision.outcome,
+                reason=decision.reason.value,
+                detail=decision.details,
+            ),
+        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=decision.details)
+
     policy.status = ChannelPolicyStatus.APPROVED
     repos.channel_policies.upsert(policy)
     repos.audits.add(
         action="channel_policy.approve",
         resource_type="channel_policy",
         resource_id=policy_id,
-        metadata={"status": str(policy.status)},
+        metadata={
+            "status": str(policy.status),
+            **_policy_metadata(
+                outcome=decision.outcome,
+                reason=decision.reason.value,
+                detail=decision.details,
+            ),
+        },
     )
     return PolicyStateResponse(policy=policy)
 
