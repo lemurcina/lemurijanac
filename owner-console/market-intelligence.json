@@ -1,0 +1,34 @@
+{
+  "asOf": "2026-08-25T18:49:00-07:00",
+  "scope": "Shadow + adjacent revenue evidence",
+  "scout": {
+    "learningFindings": 5,
+    "source": "docs/revenue-learning/2026-08-25.md",
+    "highlights": [
+      "Google Business Profile completeness/relevance is a controllable local visibility lever",
+      "Neighbourhood/service-area copy should be explicit and aligned with GBP",
+      "Shorter contact forms with autocomplete reduce friction",
+      "Mobile performance/Core Web Vitals matter for local search and conversion",
+      "Only verified trust signals/review/licence facts should be shown"
+    ]
+  },
+  "liveDiscovery": {
+    "rawSignals": 0,
+    "verifiedOpportunities": 0,
+    "rejectedSignals": 0,
+    "status": "NOT_RUN_WITH_PROOF",
+    "nextGate": "Phase 3 issue #33 must produce the first evidenced public-source run"
+  },
+  "adjacentRevenueEvidence": {
+    "salesLeadsContacted": 1,
+    "salesLeadEvidence": "Haik Electric — $149 offer sent; no reply recorded in latest evidence",
+    "supplierVendorInquiries": 6,
+    "supplierVendorEvidence": "Six B2B apparel manufacturer inquiries sent; no contract/purchase/production recorded"
+  },
+  "proofLinks": {
+    "learningBrief": "https://github.com/lemurcina/lemurijanac/blob/main/docs/revenue-learning/2026-08-25.md",
+    "phase3": "https://github.com/lemurcina/lemurijanac/issues/33",
+    "adjacentDailyEvidence": "https://github.com/lemurcina/Ekstenzije/pull/39"
+  },
+  "truthBoundary": "Do not count infrastructure, draft PRs, inferred demand or expected money as leads, opportunities or realized revenue."
+}
