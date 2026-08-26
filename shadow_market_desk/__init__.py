@@ -1,2 +1,1 @@
-"""CRM and outreach workflow primitives."""
-
+"""Shadow Market Desk package."""
