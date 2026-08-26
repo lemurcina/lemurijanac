@@ -1,0 +1,47 @@
+{
+  "asOf": "2026-08-25T20:58:00-07:00",
+  "services": [
+    {
+      "name": "GitHub / Shadow canonical",
+      "status": "ACTIVE",
+      "purpose": "Canonical code, issues, PRs, CI evidence and owner gates",
+      "current": "Main healthy; new Copilot PR verifier added at 8fc650ce7228946fa8ddf0957a66297e8438b3ea",
+      "next": "Verify new Copilot head runs and move only exact-head green PRs forward"
+    },
+    {
+      "name": "GitHub Copilot coding agents",
+      "status": "REACTIVATED",
+      "purpose": "Implement and reconcile Shadow core lanes and human-design revenue assets",
+      "current": "Six Shadow core PRs were draft/non-mergeable; all received fresh verifier-sync instructions. Human redesign issue #80 was explicitly activated.",
+      "next": "Produce synchronized heads, green read-only verifier runs and isolated human-reviewed Vercel previews"
+    },
+    {
+      "name": "GitLab Duo / Agent Platform",
+      "status": "WAITING_FOR_FIRST_PROOF",
+      "purpose": "Independent Red Team, CI Recovery and Integration Verifier plane",
+      "current": "Connection is complete but no GitLab pipeline/session/verifier evidence is ingested into Shadow yet",
+      "next": "Record exact GitLab pipeline SHA/status plus one Red Team and one Integration Verifier result in issue #36"
+    },
+    {
+      "name": "Vercel",
+      "status": "ACTIVE",
+      "purpose": "Owner Desk plus isolated client-facing previews",
+      "current": "Shadow Owner Desk production is live; legacy bold demos remain available but are explicitly not human-approved",
+      "next": "Deploy issue #80 human-reviewed replacements without overwriting legacy demos"
+    },
+    {
+      "name": "Human Design / Revenue Sites",
+      "status": "REACTIVATED",
+      "purpose": "Create serious human-looking NextLevel/electrician/EV/handyman client assets",
+      "current": "Benchmark gate exists; production replacements did not yet exist. Issue #80 is now the execution lane.",
+      "next": "NextLevel first, then electrician/EV/handyman; desktop/mobile evidence + benchmark + CI before promotion"
+    },
+    {
+      "name": "Scout / Phase 3 live discovery",
+      "status": "BLOCKED_BY_PHASE_2",
+      "purpose": "Produce lawful public-source signals and verified buyer-first opportunities",
+      "current": "5 learning findings exist; 0 evidenced live signals and 0 verified opportunities",
+      "next": "Clear core Phase 2 integration, then run the first evidenced Phase 3 discovery pilot"
+    }
+  ]
+}
