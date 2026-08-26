@@ -1,0 +1,12 @@
+{
+  "name": "Shadow Owner Console",
+  "short_name": "Shadow",
+  "description": "Results-first owner console for Shadow Market Desk.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#070b12",
+  "theme_color": "#070b12",
+  "icons": [
+    {"src":"/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}
+  ]
+}
