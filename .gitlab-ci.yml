@@ -1,0 +1,43 @@
+stages:
+  - verify
+  - test
+  - adversarial
+
+variables:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+.default_python:
+  image: python:3.12-slim
+  before_script:
+    - python -m pip install --upgrade pip
+    - python -m pip install -e '.[dev]'
+
+ruff:
+  extends: .default_python
+  stage: verify
+  script:
+    - ruff check .
+
+pytest:
+  extends: .default_python
+  stage: test
+  script:
+    - pytest -q
+
+shadow_failure_gates:
+  extends: .default_python
+  stage: adversarial
+  script:
+    - pytest -q -k 'watchdog or failure or gate or policy or reality or buyer or evidence'
+  allow_failure: false
+
+shadow_agent_contract:
+  image: alpine:3.20
+  stage: adversarial
+  script:
+    - test -f docs/gitlab-duo/SHADOW_AGENT_CONTRACT.md
+    - grep -q 'Shadow Red Team' docs/gitlab-duo/SHADOW_AGENT_CONTRACT.md
+    - grep -q 'CI Recovery' docs/gitlab-duo/SHADOW_AGENT_CONTRACT.md
+    - grep -q 'Integration Verifier' docs/gitlab-duo/SHADOW_AGENT_CONTRACT.md
+  allow_failure: false
